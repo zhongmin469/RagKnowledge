@@ -1,5 +1,5 @@
 <script setup>
-// 管理员用户管理页：列表、创建、启禁用与重置密码
+// 管理员用户管理页：列表、创建、启禁用、重置密码，以及用户全景查看（v5 R7）
 // 前端按角色隐藏入口；最终权限仍由后端强制校验
 import { ref, watch, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -9,6 +9,7 @@ import {
   updateUserStatus,
   resetUserPassword
 } from '../api/admin'
+import AdminUserDetailDrawer from '../components/AdminUserDetailDrawer.vue'
 
 const props = defineProps({
   currentUserId: { type: Number, default: null }
@@ -36,6 +37,15 @@ function currentFilters() {
 const createVisible = ref(false)
 const creating = ref(false)
 const form = ref({ username: '', display_name: '', password: '', role: 'member' })
+
+// v5 R7：用户全景（只读）
+const detailVisible = ref(false)
+const detailUserId = ref(null)
+
+function openDetail(row) {
+  detailUserId.value = row.user_id
+  detailVisible.value = true
+}
 
 const PASSWORD_MIN = 8
 
@@ -248,8 +258,9 @@ onMounted(() => refresh(1))
       <el-table-column label="最近登录" min-width="150">
         <template #default="{ row }">{{ fmtTime(row.last_login_at) }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="190" fixed="right">
+      <el-table-column label="操作" width="240" fixed="right">
         <template #default="{ row }">
+          <el-button link size="small" type="primary" @click="openDetail(row)">查看</el-button>
           <el-button
             link
             size="small"
@@ -317,6 +328,8 @@ onMounted(() => refresh(1))
         <el-button type="primary" :loading="creating" @click="onCreate">创建</el-button>
       </template>
     </el-dialog>
+
+    <AdminUserDetailDrawer v-model="detailVisible" :user-id="detailUserId" />
   </el-card>
 </template>
 

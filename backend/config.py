@@ -222,6 +222,14 @@ class Settings(BaseSettings):
     # 写队列容量：队满丢弃并计数，绝不阻塞问答主链路
     IO_LOG_QUEUE_MAX: int = 1000
 
+    # ---------- 管理端审计与查看留痕（v5 R8/R9）----------
+    # 管理员查看他人问答/链路的去重窗口（秒）：窗口内重复查看只留一条审计
+    ADMIN_VIEW_LOG_DEDUP_SECONDS: int = 60
+    # operation_log 保留天数：仅用于管理端展示提示，不自动清理（审计不可删）
+    AUDIT_LOG_RETENTION_DAYS: int = 730
+    # 用户详情概览统计缓存秒数；0 = 关闭缓存
+    ADMIN_OVERVIEW_CACHE_SECONDS: int = 0
+
     # ---------- 配额与限流（v3 / WP5-6）----------
     # 演示环境防止单个用户把 Key 打爆：日 token 上限 + 每分钟请求数限流。
     # 管理员可在配置中心在线调整；关闭后不做任何拦截。

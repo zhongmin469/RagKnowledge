@@ -124,6 +124,7 @@ CREATE TABLE IF NOT EXISTS chat_io_log (
   context_usage     JSONB        NULL,
   ua                VARCHAR(256) NULL,
   ip_masked         VARCHAR(64)  NULL,
+  user_deleted_at   TIMESTAMP    NULL,
   created_at        TIMESTAMP    NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_io_log_user_time ON chat_io_log (user_id, created_at DESC);
@@ -132,6 +133,8 @@ CREATE INDEX IF NOT EXISTS idx_io_log_status ON chat_io_log (status, created_at 
 CREATE INDEX IF NOT EXISTS idx_io_log_session ON chat_io_log (session_id);
 ALTER TABLE chat_io_log ADD COLUMN IF NOT EXISTS query_rewritten TEXT NULL;
 ALTER TABLE chat_io_log ADD COLUMN IF NOT EXISTS rewrite_reason VARCHAR(200) NULL;
+ALTER TABLE chat_io_log ADD COLUMN IF NOT EXISTS user_deleted_at TIMESTAMP NULL;
+CREATE INDEX IF NOT EXISTS idx_io_log_user_visible ON chat_io_log (user_id, user_deleted_at, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS llm_call_log (
   call_id           BIGSERIAL PRIMARY KEY,
@@ -402,9 +405,16 @@ def _filters(
     answer_mode: Optional[str] = None,
     keyword: Optional[str] = None,
     trace_id: Optional[str] = None,
+    include_deleted: bool = False,
+    only_deleted: bool = False,
 ) -> tuple[str, dict]:
     clauses: list[str] = []
     params: dict[str, Any] = {}
+    # v5 R6：用户主动删除只做软删除；用户侧默认不可见，管理端显式 include_deleted 才可见
+    if only_deleted:
+        clauses.append("user_deleted_at IS NOT NULL")
+    elif not include_deleted:
+        clauses.append("user_deleted_at IS NULL")
     if user_id is not None:
         clauses.append("user_id = %(user_id)s")
         params["user_id"] = int(user_id)
@@ -442,12 +452,14 @@ def _row_to_dict(row) -> dict:
         "log_id", "trace_id", "user_id", "session_id", "record_id", "turn_index",
         "intent", "answer_mode", "query", "query_rewritten", "rewrite_reason", "answer", "status", "error_code", "error_msg",
         "model", "prompt_tokens", "completion_tokens", "total_tokens", "first_token_ms",
-        "elapsed_ms", "frame_count", "tool_chain", "context_usage", "ua", "ip_masked", "created_at",
+        "elapsed_ms", "frame_count", "tool_chain", "context_usage", "ua", "ip_masked",
+        "user_deleted_at", "created_at",
     ]
     item = dict(zip(keys, row))
-    for key in ("created_at",):
+    for key in ("created_at", "user_deleted_at"):
         if isinstance(item.get(key), (datetime, date)):
             item[key] = item[key].isoformat(sep=" ")
+    item["user_deleted"] = item.get("user_deleted_at") is not None
     return item
 
 
@@ -462,8 +474,13 @@ async def list_logs(
     trace_id: Optional[str] = None,
     page: int = 1,
     size: int = 20,
+    include_deleted: bool = False,
+    only_deleted: bool = False,
 ) -> tuple[int, list[dict]]:
-    where, params = _filters(user_id, start, end, status, intent, answer_mode, keyword, trace_id)
+    where, params = _filters(
+        user_id, start, end, status, intent, answer_mode, keyword, trace_id,
+        include_deleted=include_deleted, only_deleted=only_deleted,
+    )
     pool = get_pool()
     async with pool.connection() as conn:
         cur = await conn.execute(f"SELECT count(*) FROM chat_io_log{where}", params)
@@ -474,7 +491,7 @@ async def list_logs(
             SELECT log_id, trace_id, user_id, session_id, record_id, turn_index,
                    intent, answer_mode, query, query_rewritten, rewrite_reason, answer, status, error_code, error_msg,
                    model, prompt_tokens, completion_tokens, total_tokens, first_token_ms,
-                   elapsed_ms, frame_count, tool_chain, context_usage, ua, ip_masked, created_at
+                   elapsed_ms, frame_count, tool_chain, context_usage, ua, ip_masked, user_deleted_at, created_at
             FROM chat_io_log{where}
             ORDER BY log_id DESC LIMIT %(limit)s OFFSET %(offset)s
             """,
@@ -484,16 +501,19 @@ async def list_logs(
     return int(total), [_row_to_dict(r) for r in rows]
 
 
-async def get_detail(trace_id: str) -> Optional[dict]:
+async def get_detail(trace_id: str, include_deleted: bool = False) -> Optional[dict]:
+    where = "trace_id = %(trace)s"
+    if not include_deleted:
+        where += " AND user_deleted_at IS NULL"
     pool = get_pool()
     async with pool.connection() as conn:
         cur = await conn.execute(
-            """
+            f"""
             SELECT log_id, trace_id, user_id, session_id, record_id, turn_index,
                    intent, answer_mode, query, query_rewritten, rewrite_reason, answer, status, error_code, error_msg,
                    model, prompt_tokens, completion_tokens, total_tokens, first_token_ms,
-                   elapsed_ms, frame_count, tool_chain, context_usage, ua, ip_masked, created_at
-            FROM chat_io_log WHERE trace_id = %(trace)s ORDER BY log_id DESC LIMIT 1
+                   elapsed_ms, frame_count, tool_chain, context_usage, ua, ip_masked, user_deleted_at, created_at
+            FROM chat_io_log WHERE {where} ORDER BY log_id DESC LIMIT 1
             """,
             {"trace": trace_id},
         )
@@ -570,6 +590,8 @@ async def list_for_export(**filters) -> list[dict]:
         filters.get("user_id"), filters.get("start"), filters.get("end"),
         filters.get("status"), filters.get("intent"), filters.get("answer_mode"),
         filters.get("keyword"), filters.get("trace_id"),
+        include_deleted=bool(filters.get("include_deleted")),
+        only_deleted=bool(filters.get("only_deleted")),
     )
     params["limit"] = 10000
     pool = get_pool()
@@ -592,26 +614,37 @@ async def user_export(user_id: int) -> list[dict]:
 
 
 async def delete_user_logs(user_id: int) -> int:
-    """物理删除本人全部运行日志；先删该用户 trace 下的 LLM 调用，避免孤儿行。"""
+    """v5 R6：标记本人日志为“已从用户视角删除”（软删除），返回新标记条数。
+
+    - 用户侧读取默认过滤 `user_deleted_at IS NULL`，因此删除后本人不可见、不可导出；
+    - 管理端仍可在保留期内查看这批记录（审计与排障要求）；
+    - 保留期到期由 cleanup_expired 物理清除。
+    """
     pool = get_pool()
     async with pool.connection() as conn:
         async with conn.transaction():
-            await conn.execute(
-                "DELETE FROM llm_call_log WHERE user_id = %(uid)s OR trace_id IN "
-                "(SELECT trace_id FROM chat_io_log WHERE user_id = %(uid)s)",
+            cur = await conn.execute(
+                """
+                UPDATE chat_io_log SET user_deleted_at = now()
+                WHERE user_id = %(uid)s AND user_deleted_at IS NULL
+                """,
                 {"uid": int(user_id)},
             )
-            cur = await conn.execute("DELETE FROM chat_io_log WHERE user_id = %(uid)s", {"uid": int(user_id)})
             removed = cur.rowcount or 0
     return int(removed)
 
 
 async def delete_session_logs(session_id: int) -> int:
+    """v5 R6：删除会话时同样改为软删除，避免管理端链路断档。"""
     pool = get_pool()
     async with pool.connection() as conn:
         async with conn.transaction():
             cur = await conn.execute(
-                "DELETE FROM chat_io_log WHERE session_id = %(sid)s", {"sid": int(session_id)}
+                """
+                UPDATE chat_io_log SET user_deleted_at = now()
+                WHERE session_id = %(sid)s AND user_deleted_at IS NULL
+                """,
+                {"sid": int(session_id)},
             )
             return int(cur.rowcount or 0)
 

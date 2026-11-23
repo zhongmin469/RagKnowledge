@@ -2,9 +2,9 @@
 
 > 版本：v5.0
 > 编写日期：2026-11-20
-> 基线：v4 全量交付，V4-1–V4-3 的 N1–N11 已完成；当前 `pytest 284 passed / 1 skipped`
-> 定位：知识库摄取与管理体验增强 + 自然语言任务自主规划
-> 状态：**V5-1、V5-2 已验收（2026-11-20；V5-2 格式保真与依赖补丁已验收）；V5-3 自主规划待开发**
+> 基线：v4 全量交付，V4-1–V4-3 的 N1–N11 已完成；当前 `pytest 304 passed / 2 skipped`（V5-4 新增 10 个用例后）
+> 定位：知识库摄取与管理体验增强 + 自然语言任务自主规划 + 管理员审计与全链路查看
+> 状态：**V5-1、V5-2、V5-4 已验收（2026-11-20）；V5-3 自主规划待开发**
 
 ---
 
@@ -17,8 +17,12 @@
 | 优化点 4：时间筛选 + 名称关键字自动筛选 | R3 | 上传时间范围查询 + 文档名关键字 300ms 自动筛选 | P1 | V5-1 |
 | 优化点 5：原文档下载与预览 | R4 | 管理员下载原件；已登录用户可预览 PDF/Markdown/DOCX/Excel | P1 | V5-2 |
 | 优化点 2：自然语言描述，自我规划任务过程 | R5 | 自动模式识别复合目标，自动拆步骤；不要求用户先列步骤 | P1 | V5-3 |
+| 「删除我的运行日志」提示要优化 | R6 | 删除改为“本人不可见 + 管理员保留期内可查”，纠正确认文案 | P0 | V5-4 |
+| 管理员可查其他用户的问答 | R7 | 用户全景：概览/问答/会话/消息/文档/反馈/活动流只读接口 | P1 | V5-4 |
+| 管理员可查其他用户的所有操作 | R8 | `operation_log` 查询/导出/动作补全 + 管理端审计页 | P1 | V5-4 |
+| 管理员查看权限不可失控 | R9 | 查看他人数据反审计（60 秒去重）+ 只读横幅 | P1 | V5-4 |
 
-版本号采用 **v5.0**：本轮同时增加摄取格式、知识库管理交互和 Agent 任务规划入口，已经不是 v4 的收尾补丁。版本决策见第 10 节。
+版本号采用 **v5.0**：本轮同时增加摄取格式、知识库管理交互和 Agent 任务规划入口，已经不是 v4 的收尾补丁。版本决策见第 10 节。R6–R9 为 2026-11-20 追加的第三批补充需求（管理员审计与用户全链路），决策已确认并已交付 V5-4。
 
 ---
 
@@ -31,6 +35,9 @@
 3. 让文档列表支持按上传时间范围和文档名关键字定位，减少大知识库里的翻页成本。
 4. 让管理员不离开系统就能预览和下载原文档，形成“上传 → 检索 → 核对原件”的闭环。
 5. 让用户在对话里只描述目标，由助手自行判断是否需要多步任务、自动拆解步骤并给出计划；不要求用户像任务中心一样先写“第一步、第二步”。
+6. 让“用户删除日志”与“管理员审计查看权”的口径自洽：用户删除后本人不可见，管理员在保留期内仍可查，界面如实说明。
+7. 给管理员一个“一个入口看全一个用户”的面板：概览、问答、会话与消息、文档、反馈、活动流。
+8. 让 `operation_log` 从“只写不读”变成可筛选、可导出、可追溯；管理员查看他人数据必须留痕。
 
 ### 1.2 边界
 
@@ -41,6 +48,9 @@
 - 不改变现有问答主链路、SSE 事件类型和已有错误码语义。
 - 不做文档级权限、文件夹、标签、版本管理；本轮只做单文档的上传、筛选、预览、下载、重解析、删除。
 - 新增筛选与下载接口只对管理员开放；预览接口对所有已登录用户开放，普通用户从问答来源卡片触发原文档预览。
+- 管理员对他人数据**只读**：不提供修改、删除、代发消息、冒充身份；不展示密码哈希、令牌、完整 IP。
+- 用户删除日志改为软删除，**不再物理删除**；管理员可见窗口 = `IO_LOG_RETENTION_DAYS`（默认 90 天）。
+- `operation_log` 仍保持“不含聊天正文”的约束，问答原文只存在于 `chat_io_log` / `chat_record`；审计本身不提供删除/清空。
 
 ### 1.3 需求追溯
 
@@ -51,6 +61,10 @@
 | R3 | `GET /api/docs/list` 只有 `keyword/status`；前端关键字 `watch` 立即请求，没有日期范围，也没有查询按钮 |
 | R4 | `document.file_path` 已保存原件路径，`get_document_meta()` 可读，但没有下载/预览路由；`DocTable` 只有重解析和删除 |
 | R5 | 任务中心已能 `goal → planner → steps`，但入口仍偏“任务模式/任务中心”，新建任务示例引导用户写“先…再…”，自动模式对复合目标的识别没有形成明确规则 |
+| R6 | `DELETE /api/me/io-logs` 物理删除 `chat_io_log` / `llm_call_log`，删除后管理员确实查不到；`UserMenu.vue` 文案明写“管理员也无法查到”；删除动作无审计；删会话会连带物理删除该会话运行日志 |
+| R7 | 用户管理只有列表/创建/启禁用/重置密码；会话与消息按 `user_id` 严格隔离，无任何管理员跨用户读取接口 |
+| R8 | `operation_log` 已写入 20 类动作但没有任何查询接口；管理员导出 I/O 日志与反馈均未留痕 |
+| R9 | 管理员查看他人 trace 无留痕、无只读提示，权限滥用事后不可追查 |
 
 ---
 
@@ -63,6 +77,10 @@
 | R3 | 上传时间范围 + 文档名关键字筛选 | 是 | 是 | 无 |
 | R4 | 原文档下载与在线预览 | 是 | 是 | R1（Excel/CSV/DOC 预览） |
 | R5 | 自然语言任务自主规划 | 是 | 是 | 现有 workflow planner / PlanCard |
+| R6 | 删除本人运行日志的语义与文案纠正 | 是 | 是 | `chat_io_log.user_deleted_at` |
+| R7 | 管理员用户全景与跨用户只读查询 | 是 | 是 | R6 可见性过滤 |
+| R8 | 操作审计查询与导出 + 动作补全 | 是 | 是 | `operation_log` |
+| R9 | 管理员查看行为反审计与合规约束 | 是 | 是 | R7/R8 |
 
 ---
 
@@ -642,6 +660,170 @@
 
 ---
 
+### R6 删除本人运行日志的语义与文案纠正
+
+#### R6.1 需求描述
+
+用户在个人菜单里删除自己的运行日志时，现状提示为“将物理删除你本人的全部问答运行日志（含问题与回答原文），删除后管理员也无法查到，且不可恢复”。这与产品定位冲突：管理员需要能查其他用户的操作、问答与运行日志链路，用于问题定位与合规审计。
+
+因此把“用户删除”定义为**从用户本人视角删除**：用户侧立即不可见、不可导出；系统仍保留完整记录，管理员在日志保留期内（默认 90 天，跟随 `IO_LOG_RETENTION_DAYS`）可查看；超过保留期由既有清理机制正常回收。界面文案必须如实说明，不得再宣称“管理员也查不到”。
+
+#### R6.2 实现口径
+
+| 项 | 规则 |
+|---|---|
+| 删除范围 | `DELETE /api/me/io-logs` 作用于当前用户本人全部 `chat_io_log` 记录（含问答原文与检索片段） |
+| 删除方式 | 软删除：`UPDATE chat_io_log SET user_deleted_at = now() WHERE user_id = ? AND user_deleted_at IS NULL` |
+| 已删除的数据 | 用户侧列表、详情、导出全部不可见；重复删除返回 `removed=0`，幂等 |
+| 管理员侧 | `GET /api/admin/io-logs` 默认可见全部（含已软删除），并返回 `user_deleted` 标记；支持 `include_deleted` / `only_deleted` 显式筛选 |
+| 会话删除联动 | 删除会话时，该会话下的运行日志同样只做软删除，不物理删除，避免链路断档 |
+| 管理员详情 | `get_detail(trace_id, include_deleted=True)` 可读已软删除记录，读取时写 `ADMIN_VIEW_USER_DATA` 审计 |
+| 审计 | 用户删除写 `USER_LOG_DELETE`（detail `{removed, mode:"soft"}`）；导出写 `USER_LOG_EXPORT`；删除会话写 `SESSION_DELETE` |
+
+#### R6.3 前端文案（必须一致）
+
+确认弹窗正文：
+
+> 删除后，你本人将无法再查看或导出这些运行日志；管理员在日志保留期内（当前 90 天）仍可查看，用于问题定位与合规审计。
+
+成功提示：`已从你的视角删除 N 条运行日志`。
+
+个人设置区补充说明：管理员具备审计查看权限，可查看本人在保留期内的问答与运行日志；该权限受审计留痕约束。
+
+#### R6.4 改造点
+
+- `backend/services/io_log.py`：`chat_io_log` 增加 `user_deleted_at`；`delete_user_logs` / `delete_session_logs` 改为软删除；`_filters` 支持 `include_deleted` / `only_deleted`；`_row_to_dict` 派生 `user_deleted`。
+- `backend/routers/user_io.py`、`backend/routers/session.py`：写审计。
+- `frontend/src/components/UserMenu.vue`：文案与提示纠正。
+- `frontend/src/views/IoLogView.vue`：管理员视图增加“删除状态”列与三态筛选。
+
+#### R6.5 验收
+
+1. 用户删除后，`/api/me/io-logs` 计数为 0，导出返回空；
+2. 同一 trace 管理员列表可见且 `user_deleted=true`，详情可读；
+3. 再次删除返回 removed=0；
+4. 删除会话后该会话日志管理端仍可查；
+5. `operation_log` 出现 `USER_LOG_DELETE`，detail 含 `mode=soft`；
+6. 文案中不再出现“管理员也无法查到”。
+
+---
+
+### R7 管理员用户全景与跨用户只读查询
+
+#### R7.1 需求描述
+
+管理员需要在用户管理里点开一个用户，就能看到该用户的“全链路”：概览、问答记录、会话列表、会话消息、文档、反馈、活动流。全部**只读**，不提供代发、修改、删除。
+
+#### R7.2 接口
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/admin/users/{user_id}/overview` | 账号信息 + 总量（问答/会话/文档/反馈/审计）+ 近 7 天/30 天问答数 + 已删除问答数 + 最近登录/最近问答 |
+| GET | `/api/admin/users/{user_id}/qa` | 该用户问答记录分页，含 `user_deleted` 标记 |
+| GET | `/api/admin/users/{user_id}/sessions` | 该用户会话分页 |
+| GET | `/api/admin/users/{user_id}/sessions/{sid}/messages` | 会话消息只读分页；非该用户会话返回 `40402` |
+| GET | `/api/admin/users/{user_id}/documents` | 该用户上传文档分页 |
+| GET | `/api/admin/users/{user_id}/feedback` | 该用户反馈分页 |
+| GET | `/api/admin/users/{user_id}/activity` | 统一时间线：`chat_io_log` 与 `operation_log` 合并，`type` 取 `qa/login/doc/export/admin/other` |
+
+统一约束：全部 `require_admin`；用户不存在返回 `40403`；日期参数非法返回 `40001`；不返回密码哈希、令牌、完整 IP。
+
+#### R7.3 前端
+
+- `UsersView.vue` 操作列新增「查看」，打开 `AdminUserDetailDrawer.vue` 右侧抽屉。
+- 抽屉 6 个 Tab：概览 / 问答记录 / 会话 / 文档 / 反馈 / 活动流；会话支持只读查看消息弹窗。
+- 抽屉顶部固定只读审计横幅：说明“本次查看会记入审计日志，被查看用户可追溯”。
+
+#### R7.4 验收
+
+1. 管理员可对任意普通用户打开 6 个 Tab 并分页；
+2. 普通用户访问任一 `/api/admin/users/*` 返回 `40303`；
+3. 指定非本用户会话消息返回 `40402`，不泄露存在性以外的信息；
+4. 打开概览与消息均写 `ADMIN_VIEW_USER_DATA`；
+5. 抽屉在 1440 与 375 宽度下可用（窄屏为全宽抽屉、Tab 横向滚动）。
+
+---
+
+### R8 操作审计查询与导出 + 动作补全
+
+#### R8.1 需求描述
+
+`operation_log` 已在大量路径写入，但此前没有任何读取入口，等于“只写不查”。本轮补齐查询、筛选、导出，并把缺口动作补上，使管理员能按人、按动作、按时间、按对象追溯所有操作。
+
+#### R8.2 动作补全
+
+新增动作常量与中文名：
+
+| action | 中文名 | 触发点 |
+|---|---|---|
+| `USER_LOG_EXPORT` | 导出本人运行日志 | `GET /api/me/io-logs/export` |
+| `USER_LOG_DELETE` | 从本人视角删除日志 | `DELETE /api/me/io-logs` |
+| `SESSION_DELETE` | 删除会话 | 删除单个会话 |
+| `SESSION_DELETE_BATCH` | 批量删除会话 | 批量删除 |
+| `ADMIN_VIEW_USER_DATA` | 查看他人数据 | 管理员读取他人 trace / 用户全景 |
+| `ADMIN_IO_EXPORT` | 管理员导出运行日志 | `GET /api/admin/io-logs/export` |
+| `AUDIT_EXPORT` | 导出审计日志 | `GET /api/admin/audit-logs/export` |
+| `FEEDBACK_EXPORT` | 导出反馈 | `GET /api/admin/feedback/export` |
+
+`operation_log` 增加 `idx_operation_log_target` 支撑按对象检索；本轮累计动作枚举 20 个。
+
+#### R8.3 接口
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/admin/audit-logs` | 分页查询：`user_id` / `action` / `target_type` / `target_id` / `start_date` / `end_date` / `keyword` |
+| GET | `/api/admin/audit-logs/actions` | 动作枚举 + 中文名，供前端下拉 |
+| GET | `/api/admin/audit-logs/export` | CSV 导出，上限 1 万行，导出本身写 `AUDIT_EXPORT` |
+
+同时 `GET /api/admin/feedback` 增加 `user_id` 筛选；`GET /api/admin/io-logs` 增加 `include_deleted` / `only_deleted`。
+
+#### R8.4 前端
+
+新增 `AuditLogView.vue`（菜单「操作审计」）：筛选条（用户、动作、对象、时间、关键字）+ 表格 + detail 展开 + 导出按钮；`api/adminAudit.js` 封装。
+
+#### R8.5 验收
+
+1. 按 `user_id` 过滤命中该用户全部动作；按 `action` 过滤命中对应动作；
+2. 导出 CSV 行数 = 查询结果（≤1 万），且导出后新增一条 `AUDIT_EXPORT`；
+3. 动作枚举返回 20 项且每项有中文名；
+4. 非管理员访问返回 `40303`；
+5. 日期非法返回 `40001`，不到 SQL 层报错。
+
+---
+
+### R9 管理员查看行为反审计与合规约束
+
+#### R9.1 需求描述
+
+管理员能看他人数据，就必须能追查“谁在什么时候看了谁”。所有跨用户读取都要留痕，并在界面明确告知；同时避免翻页、刷新产生海量噪音。
+
+#### R9.2 规则
+
+| 项 | 规则 |
+|---|---|
+| 留痕范围 | 管理员读取他人 trace 详情、用户全景概览、会话消息 → `ADMIN_VIEW_USER_DATA` |
+| 去重 | 同一管理员对同一对象同一动作，`ADMIN_VIEW_LOG_DEDUP_SECONDS`（默认 60 秒）内只记一次 |
+| 自身数据 | 管理员查看自己的数据不记 `ADMIN_VIEW_USER_DATA` |
+| 保留 | 审计日志永久保留，不自动清理（`AUDIT_LOG_RETENTION_DAYS=730` 仅作为容量评估参考，不做删除） |
+| 可见性回显 | 用户全景概览返回 `viewed_by_admin`，让被查看事实可被追查 |
+| 界面提示 | 他人 trace 抽屉显示橙色只读审计横幅；用户详情抽屉顶部同类横幅 |
+
+#### R9.3 改造点
+
+- `backend/services/audit.py`：新增 `view_dedup_ok()`（内存 dict + 锁 + monotonic）与 `log_view()`。
+- `backend/routers/admin_io.py`：他人 trace 以 `include_deleted=True` 读取并写审计。
+- `frontend/src/components/TraceDrawer.vue`：新增 `adminView` / `ownerLabel` props 与审计横幅。
+
+#### R9.4 验收
+
+1. 60 秒内重复打开同一用户概览只产生 1 条 `ADMIN_VIEW_USER_DATA`；
+2. 隔 60 秒后再次打开新增 1 条；
+3. 管理员查看自己的 trace 不记该动作；
+4. 他人 trace 抽屉出现只读审计横幅，自己的 trace 不出现；
+5. 审计日志页面能按 `target_id` 查到“谁看过这个用户”。
+
+---
+
 ## 4. 明确不做
 
 | 项 | 原因 |
@@ -656,6 +838,11 @@
 | 自然语言修改已生成计划（如“把第 2 步换成业务库”） | 本轮先做好“目标 → 计划”，计划修订列入后续 |
 | 多智能体协作、跨会话长期记忆 | 超出当前 planner/executor 架构 |
 | 上传断点续传、暂停/恢复单个上传 | 当前分块上传已支持失败清理；断点续传另立需求 |
+| 用户真正物理删除运行日志（连管理员侧一并销毁） | 与“管理员可查全链路”冲突；如需要应作为带审批流的数据销毁功能另立需求 |
+| 管理员修改/删除/代发用户数据、冒充用户身份 | 只做只读查看，写操作撤销风险高 |
+| 审计日志的删除、清空、自动过期回收 | 审计需完整可追溯，保留策略另行评审 |
+| 基于审计数据的告警、报表、异常行为分析 | 本轮只交付查询与导出，分析能力另立需求 |
+| 跨用户检索（按关键字直接搜所有用户的提问原文） | 涉及隐私范围与索引成本，先按“先定位用户再查看”设计 |
 
 ---
 
@@ -673,11 +860,26 @@
 | GET | `/api/docs/{doc_id}/preview` | 新增，已登录用户预览 | V5-2 |
 | POST | `/api/chat/stream` | 自动模式命中复合目标时返回现有 `workflow` 帧；不新增事件类型 | V5-3 |
 | POST | `/api/workflow/plan` | 入参不变；计划 JSON 增加可选 `assumptions` | V5-3 |
+| DELETE | `/api/me/io-logs` | 语义变更：物理删除改为软删除（`user_deleted_at`），返回 `{removed, mode:"soft"}`，写 `USER_LOG_DELETE` | V5-4 |
+| GET | `/api/me/io-logs/export` | 只导出未软删除记录；写 `USER_LOG_EXPORT` | V5-4 |
+| GET | `/api/admin/io-logs` | 新增 `include_deleted` / `only_deleted`，返回 `user_deleted`；导出写 `ADMIN_IO_EXPORT` | V5-4 |
+| GET | `/api/admin/feedback` | 新增 `user_id` 筛选；导出写 `FEEDBACK_EXPORT` | V5-4 |
+| GET | `/api/admin/audit-logs` | 新增，分页查询审计（user_id/action/target/时间/关键字） | V5-4 |
+| GET | `/api/admin/audit-logs/actions` | 新增，动作枚举 + 中文名 | V5-4 |
+| GET | `/api/admin/audit-logs/export` | 新增，CSV 导出上限 1 万行，写 `AUDIT_EXPORT` | V5-4 |
+| GET | `/api/admin/users/{user_id}/overview` | 新增，用户概览（含 `qa_deleted`、`viewed_by_admin`），写 `ADMIN_VIEW_USER_DATA` | V5-4 |
+| GET | `/api/admin/users/{user_id}/qa` | 新增，用户问答记录分页 | V5-4 |
+| GET | `/api/admin/users/{user_id}/sessions` | 新增，用户会话分页 | V5-4 |
+| GET | `/api/admin/users/{user_id}/sessions/{sid}/messages` | 新增，会话消息只读；越权返回 `40402` | V5-4 |
+| GET | `/api/admin/users/{user_id}/documents` | 新增，用户文档分页 | V5-4 |
+| GET | `/api/admin/users/{user_id}/feedback` | 新增，用户反馈分页 | V5-4 |
+| GET | `/api/admin/users/{user_id}/activity` | 新增，问答日志 + 操作日志统一时间线 | V5-4 |
 
 错误码：
 
 - 沿用 `40002` 文件类型不支持、`40003` 文件超限、`40001` 参数错误、`40401` 文档不存在、`50003` 解析/入库失败。
 - 新增 `40407` 原文件不存在（仅下载/预览使用）。
+- V5-4 沿用 `40303` 无权限、`40402` 会话不存在、`40403` 用户不存在、`40001` 参数错误、`50003` 服务暂不可用，**未新增错误码**。
 - 不改变已有错误码含义。
 
 ### 5.2 数据模型
@@ -687,6 +889,10 @@
 | `document` | 不新增字段；继续使用 `file_path` 定位原件 | V5-1/V5-2 |
 | `document` | 可选：`idx_document_create_time`，仅在日期筛选压测需要时新增 | V5-1 |
 | `workflow_task` | 不新增字段；`assumptions` 存在 `plan_json` 内 | V5-3 |
+| `chat_io_log` | 新增 `user_deleted_at TIMESTAMP NULL`（幂等 `ADD COLUMN IF NOT EXISTS`） | V5-4 |
+| `chat_io_log` | 新增索引 `idx_io_log_user_visible (user_id, user_deleted_at, created_at DESC)` | V5-4 |
+| `operation_log` | 不新增列；新增索引 `idx_operation_log_target (target_type, target_id)` | V5-4 |
+| `operation_log` | action 取值扩展 8 类（`USER_LOG_*`、`SESSION_DELETE*`、`ADMIN_*`、`AUDIT_EXPORT`、`FEEDBACK_EXPORT`） | V5-4 |
 
 不新增表，不做不可回滚的列变更。
 
@@ -704,6 +910,9 @@
 | `DOC_PREVIEW_MAX_CHARS` | 200000 | 文本/JSON 预览字符上限 | V5-2 |
 | `DOC_PREVIEW_MAX_ROWS` | 100 | Excel 每表预览行数 | V5-2 |
 | `DOC_PREVIEW_MAX_SHEETS` | 10 | Excel 预览工作表数 | V5-2 |
+| `ADMIN_VIEW_LOG_DEDUP_SECONDS` | 60 | 管理员查看他人数据的审计去重窗口 | V5-4 |
+| `AUDIT_LOG_RETENTION_DAYS` | 730 | 审计日志保留期（仅容量评估参考，不自动删除） | V5-4 |
+| `ADMIN_OVERVIEW_CACHE_SECONDS` | 0 | 用户概览缓存秒数（默认关闭，保证数据实时） | V5-4 |
 
 若新增配置，必须同步更新 `.env` 与 `.env.example`，保持两边键集合一致；不能只写在一处。
 
@@ -716,6 +925,7 @@
 | V5-1 知识库摄取与管理 | R1 多格式解析 + R2 上传队列 + R3 时间/关键字筛选 | Excel/CSV/DOC 样本入库与检索；上传队列 1440/375；筛选接口与 UI；PDF/DOCX/MD 回归 |
 | V5-2 原文档访问 | R4 下载 + 预览 | Excel/CSV/DOCX/DOC/PDF/MD 预览；下载哈希一致；普通用户预览/下载权限分离；路径穿越拦截；40407；1440/375 |
 | V5-3 自主任务规划 | R5 自然语言目标 → 自动计划 | 10 条路由用例 ≥9；计划校验 100%；确认后执行；简单问答不误触发 |
+| V5-4 管理员审计与全链路查看 | R6 删除语义纠正 + R8 审计查询 + R7 用户全景 + R9 反审计 | 软删除与管理员可见性、7 个用户只读接口、审计查询/导出、60 秒去重、`pytest` 全绿、`npm run build` 通过；1440/375 |
 
 每阶段交付：
 
@@ -723,7 +933,9 @@
 2. 关键截图（1440 / 375）；
 3. 后端 `pytest`、前端 build、上一阶段接口回归；
 4. 数据清理记录与基线差集；
-5. 独立验收报告 MD，命名统一为“V5-1 主题验收报告”“V5-2 主题验收报告”“V5-3 主题验收报告”；v6 版本依次使用 `V6-1`、`V6-2` 前缀，`present_files` 交付后再等确认。
+5. 独立验收报告 MD，命名统一为“V5-1 主题验收报告”“V5-2 主题验收报告”“V5-3 主题验收报告”“V5-4 主题验收报告”；v6 版本依次使用 `V6-1`、`V6-2` 前缀，`present_files` 交付后再等确认。
+
+阶段执行顺序说明：V5-4 因涉及对外口径错误，优先级提到 V5-2 之后先做，执行顺序为 **R6 → R8 → R7 → R9**（先纠正删除语义，再补审计读侧，再做用户全景，最后加反审计与只读约束）；V5-3 自主规划顺延至 V5-4 之后开发。
 
 ---
 
@@ -731,12 +943,13 @@
 
 | 项 | 当前基线 | v5 要求 |
 |---|---|---|
-| pytest | 274 passed / 1 skipped | 全绿，新增用例后总数增加 |
-| 前端 build | EXIT 0，1752 modules | EXIT 0，无新增错误 |
-| OpenAPI / 业务端点 | 64 / 62 | 按新增接口增加，旧端点不缺失 |
-| 配置中心 | 11 组 / 62 参数 | 若新增参数，按实际更新断言 |
+| pytest | 304 passed / 2 skipped（V5-4 新增 10 例后） | 全绿，新增用例后总数增加 |
+| 前端 build | EXIT 0（V5-4 后），仅既有 `ui-vendor` chunk 体积提示 | EXIT 0，无新增错误 |
+| OpenAPI / 业务端点 | 按 V5-4 新增 15 个端点后更新断言 | 旧端点不缺失 |
+| 配置中心 | 11 组 / 62 参数 + V5-4 三项新配置 | 若新增参数，按实际更新断言 |
 | SSE 事件 | 现有类型不变 | 不新增、不破坏 |
-| 鉴权 | 管理接口 `require_admin` | 下载 `require_admin`；预览 `get_current_user`（已登录即可） |
+| 鉴权 | 管理接口 `require_admin` | 下载 `require_admin`；预览 `get_current_user`；`/api/admin/users/*`、`/api/admin/audit-logs*` 全部 `require_admin` |
+| 真实环境冒烟 | 真实 PG + HTTP 8011 | 软删除三态、管理员可见性、审计命中、7 个用户接口返回量与权限错误码 |
 | 数据清理 | baseline 差集 | 禁止全表 DELETE |
 
 新增专项测试建议：
@@ -745,6 +958,7 @@
 - `backend/tests/test_docs_filter_api.py`：日期边界、组合筛选、非法日期。
 - `backend/tests/test_docs_preview.py`：下载哈希、预览结构、普通用户预览/管理员下载、路径穿越、40407。
 - `backend/tests/test_workflow_autoplan.py`：10 条路由用例、计划校验、默认不执行。
+- `backend/tests/test_admin_audit_api.py`：软删除与管理员可见性、`include_deleted/only_deleted`、审计查询与动作枚举、7 个用户全景接口、越权/不存在/非法日期错误码（离线 monkeypatch 风格，10 例）。
 - `frontend` 手工/脚本 UI 验收：上传队列、筛选、预览弹窗，1440/375。
 
 ---
@@ -767,6 +981,11 @@
 | 自动规划误触发，简单问题变任务 | 体验变差、成本上升 | 复合目标规则 + 置信度阈值 + 简单问答回归集 |
 | 计划编造步骤或数据 | 错误执行 | 工具白名单、参数校验、危险动作拒绝、无数据时明确说明 |
 | 默认自动执行导致误操作 | 安全风险 | `WORKFLOW_AUTO_RUN=false`，计划卡确认后才执行 |
+| 用户删除后仍被管理员看到，被误解为“没删干净” | 信任风险 | 文案明确“从本人视角删除 + 管理员保留期内可查”；成功提示写清范围 |
+| 软删除数据在保留期到期后被回收，事后无法回溯 | 审计断档 | 保留期取出并写入配置说明；确有长期留存需求的问答另存 `chat_record` |
+| 审计表持续增长（永久保留） | 存储与查询变慢 | `idx_operation_log_target` + 分页 + 导出上限 1 万行；容量按 730 天估算，超阈值时再评估归档 |
+| 管理员查看行为高频写入审计 | 日志噪音、写放大 | 60 秒窗口去重（`ADMIN_VIEW_LOG_DEDUP_SECONDS`）；只对跨用户读取记 `ADMIN_VIEW_USER_DATA` |
+| 管理员权限集中，缺乏二次校验 | 内部风险 | 只读接口 + 强制留痕 + `viewed_by_admin` 回显；后续可加二次确认与审批流 |
 
 ---
 
@@ -783,6 +1002,12 @@
 - [ ] 确认可选索引是否纳入
 - [ ] 确认测试样本与造数/清理方案
 - [ ] 确认前端不引入新 UI 依赖
+- [x] V5-4：确认删除口径为保留期软删除，管理员保留期内可查（2026-11-20）
+- [x] V5-4：确认 `user_deleted_at` 幂等建列与两个新索引可回滚
+- [x] V5-4：确认审计三项配置同步写入 `.env` 与 `.env.example`
+- [x] V5-4：确认管理员接口全部 `require_admin`，错误码不新增
+- [x] V5-4：确认真实库冒烟造数可清理（Test_UID 已 cleanup）
+- [ ] V5-4：确认审计表长期增长应对（当前仅索引+分页+导出上限）
 
 ---
 
@@ -800,13 +1025,20 @@
 | 8 | 下载/预览权限 | 下载仅管理员；预览所有已登录用户；普通用户从问答来源卡片进入 | 已确认 |
 | 9 | 日期时区 | 服务器本地日期，结束日包含全天；开始日 > 结束日返回 `40001` | 默认执行 |
 | 10 | 上传 UI 依赖 | 只用 Element Plus，不引入新 UI 库 | 默认执行 |
+| 11 | 「删除我的运行日志」语义 | 改为方案 A：保留期软删除，用户侧不可见，管理员保留期内可查 | 已确认 |
+| 12 | 会话删除时运行日志 | 一并软删除，不物理删除，避免链路断档 | 已确认 |
+| 13 | 管理员可见窗口 | 随 `IO_LOG_RETENTION_DAYS`（当前 90 天） | 已确认 |
+| 14 | 用户全景呈现方式 | 右侧抽屉（Drawer）6 Tab，不做独立页面 | 已确认 |
+| 15 | 审计日志保留 | 永久保留，不自动清理 | 已确认 |
+| 16 | 阶段顺序 | 本需求提前为 V5-4，V5-3 自主规划顺延 | 已确认 |
 
 ---
 
 ## 11. 结论
 
-- v5 共 5 项需求，分 3 个阶段：**V5-1 摄取与管理、V5-2 原件访问、V5-3 自主规划**。
-- 首批先做 **R1 + R2 + R3**：多格式解析、上传队列、时间/关键字筛选。
-- 第二批做 **R4**：在原文档解析基础上补预览和下载，并把“普通用户可预览、下载仍限管理员”落到来源卡片。
-- 第三批做 **R5**：复用现有 workflow planner 和 PlanCard，重点补“自动识别复合目标 + 只让用户描述目标 + 规划假设/失败原因”。
-- **需求已确认，下一步进入 V5-1 开发。**
+- v5 共 9 项需求，分 4 个阶段：**V5-1 摄取与管理、V5-2 原件访问、V5-4 管理员审计与全链路查看、V5-3 自主规划**。
+- 首批先做 **R1 + R2 + R3**：多格式解析、上传队列、时间/关键字筛选（已验收）。
+- 第二批做 **R4**：在原文档解析基础上补预览和下载，并把“普通用户可预览、下载仍限管理员”落到来源卡片（已验收）。
+- 第三批做 **R6 + R8 + R7 + R9**：纠正“删除后管理员也查不到”的语义错误，补齐操作审计可查可导出，提供用户全景只读视图，并对管理员查看行为强制留痕（V5-4 已验收，`pytest 304 passed / 2 skipped`、前端 build 通过、真实 PG/HTTP 冒烟通过）。
+- 第四批做 **R5**：复用现有 workflow planner 和 PlanCard，重点补“自动识别复合目标 + 只让用户描述目标 + 规划假设/失败原因”（V5-3 待开发）。
+- **下一步进入 V5-3 开发。**

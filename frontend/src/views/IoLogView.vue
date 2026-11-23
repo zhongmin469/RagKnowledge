@@ -19,7 +19,8 @@ const filters = reactive({
   intent: '',
   answer_mode: '',
   keyword: '',
-  trace_id: ''
+  trace_id: '',
+  deleted: 'all' // v5 R6：all=含已删除 / visible=不含 / deleted=只看
 })
 
 const STATUS_META = {
@@ -86,6 +87,8 @@ async function load() {
       answer_mode: filters.answer_mode,
       keyword: filters.keyword,
       trace_id: filters.trace_id,
+      include_deleted: filters.deleted !== 'visible',
+      only_deleted: filters.deleted === 'deleted',
       ...rangeParams()
     })
     rows.value = data?.list || []
@@ -119,7 +122,7 @@ function search() {
 }
 
 function resetFilters() {
-  Object.assign(filters, { range: [], status: '', intent: '', answer_mode: '', keyword: '', trace_id: '' })
+  Object.assign(filters, { range: [], status: '', intent: '', answer_mode: '', keyword: '', trace_id: '', deleted: 'all' })
   search()
 }
 
@@ -373,6 +376,11 @@ onMounted(refreshAll)
       <el-select v-model="filters.answer_mode" placeholder="链路" clearable class="f-sm">
         <el-option v-for="(label, k) in MODE_META" :key="k" :label="label" :value="k" />
       </el-select>
+      <el-select v-model="filters.deleted" class="f-sm" aria-label="删除状态筛选">
+        <el-option label="含用户已删除" value="all" />
+        <el-option label="不含已删除" value="visible" />
+        <el-option label="只看已删除" value="deleted" />
+      </el-select>
       <el-input v-model="filters.keyword" placeholder="问题关键词" clearable class="f-md" @keyup.enter="search" />
       <el-input
         v-model="filters.trace_id"
@@ -392,6 +400,12 @@ onMounted(refreshAll)
         <template #default="{ row }">{{ fmtTime(row.created_at) }}</template>
       </el-table-column>
       <el-table-column label="用户" width="72" prop="user_id" />
+      <el-table-column label="删除状态" width="96">
+        <template #default="{ row }">
+          <el-tag v-if="row.user_deleted" size="small" type="info">用户已删除</el-tag>
+          <span v-else class="muted">—</span>
+        </template>
+      </el-table-column>
       <el-table-column label="意图" width="90">
         <template #default="{ row }">
           <span class="pill">{{ intentLabel(row.intent) }}</span>
@@ -772,4 +786,6 @@ onMounted(refreshAll)
   .f-range, .f-md, .f-sm { width: 100%; }
   .filter-actions { margin-left: 0; width: 100%; }
 }
+
+.muted { color: var(--text-secondary); }
 </style>

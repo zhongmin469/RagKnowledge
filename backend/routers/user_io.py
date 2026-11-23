@@ -1,7 +1,7 @@
-"""用户侧运行日志权利接口（v3 / WP3 §5.6）。
+"""用户侧运行日志权利接口（v3 / WP3 §5.6；v5 R6 调整删除语义）。
 
 - `GET /api/me/io-logs/export`：导出本人对话记录（JSON 附件）。
-- `DELETE /api/me/io-logs`：物理删除本人全部运行日志，删除后管理员也查不到。
+- `DELETE /api/me/io-logs`：从本人视角删除全部运行日志（软删除，管理员保留期内仍可审计查看）。
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import Response
 
 from ..errors import BizError, ERR_TRACE_NOT_FOUND, ok
-from ..services import io_log
+from ..services import audit, io_log
 from ..services.auth_deps import get_current_user
 
 router = APIRouter(prefix="/api/me/io-logs", tags=["me-io"])
@@ -30,6 +30,9 @@ async def export_my_logs(user: dict = Depends(get_current_user)):
     }
     body = json.dumps(payload, ensure_ascii=False, indent=2, default=str)
     filename = f"chat-io-logs-{user['user_id']}-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json"
+    await audit.log_operation(
+        user["user_id"], audit.USER_LOG_EXPORT, "io_log", user["user_id"], 1, {"count": len(rows)}
+    )
     return Response(
         content=body.encode("utf-8"),
         media_type="application/json; charset=utf-8",
@@ -39,9 +42,13 @@ async def export_my_logs(user: dict = Depends(get_current_user)):
 
 @router.delete("")
 async def delete_my_logs(user: dict = Depends(get_current_user)):
-    """删除本人全部运行日志（物理删除，不可恢复）。"""
+    """从本人视角删除全部运行日志（v5 R6：软删除，管理员保留期内仍可查）。"""
     removed = await io_log.delete_user_logs(user["user_id"])
-    return ok({"removed": removed}, "已删除本人运行日志")
+    await audit.log_operation(
+        user["user_id"], audit.USER_LOG_DELETE, "io_log", user["user_id"], 1,
+        {"removed": removed, "mode": "soft"},
+    )
+    return ok({"removed": removed, "mode": "soft"}, "已从你的视角删除本人运行日志")
 
 
 @router.get("/{trace_id}")

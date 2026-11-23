@@ -7,6 +7,7 @@ import DocsView from './views/DocsView.vue'
 import UsersView from './views/UsersView.vue'
 import ConfigView from './views/ConfigView.vue'
 import IoLogView from './views/IoLogView.vue'
+import AuditLogView from './views/AuditLogView.vue'
 import WorkflowView from './views/WorkflowView.vue'
 import ChatView from './views/ChatView.vue'
 import LoginView from './views/LoginView.vue'
@@ -57,6 +58,7 @@ const menus = computed(() => {
     list.push({ key: 'users', label: '用户管理' })
     list.push({ key: 'config', label: '配置中心' })
     list.push({ key: 'io-logs', label: '运行日志' })
+    list.push({ key: 'audit-logs', label: '操作审计' })
   }
   return list
 })
@@ -318,6 +320,7 @@ async function onPasswordDialogClosed() {
       <UsersView v-if="current === 'users' && user.role === 'admin'" :current-user-id="user.user_id" />
       <ConfigView v-else-if="current === 'config' && user.role === 'admin'" />
       <IoLogView v-else-if="current === 'io-logs' && user.role === 'admin'" />
+      <AuditLogView v-else-if="current === 'audit-logs' && user.role === 'admin'" />
       <WorkflowView v-else-if="current === 'workflow'" />
       <DocsView v-else-if="current === 'docs' && user.role === 'admin'" />
       <ChatView v-else :current-user="user" />

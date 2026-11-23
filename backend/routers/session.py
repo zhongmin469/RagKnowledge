@@ -14,7 +14,7 @@ from ..errors import BizError, ok, ERR_SESSION_NOT_FOUND
 from ..schemas.chat import (
     SessionCreate, SessionRename, SessionPinUpdate, SessionArchiveUpdate, SessionBatchAction,
 )
-from ..services import chat_store, app_config
+from ..services import chat_store, app_config, audit
 from ..services import io_log
 from ..services.auth_deps import get_current_user
 
@@ -146,11 +146,22 @@ async def rename_session(
 
 @router.delete("/{session_id}")
 async def delete_session(session_id: int, user: dict = Depends(get_current_user)):
-    """DELETE /api/chat/session/{session_id} —— 删除本人会话及其记录；越权返回 40402。"""
+    """DELETE /api/chat/session/{session_id} —— 删除本人会话及其记录；越权返回 40402。
+
+    v5 R6：运行日志改为软删除（管理员保留期内仍可审计），删除动作写 `SESSION_DELETE`。
+    """
+    item = await chat_store.get_session_for_user(session_id, user["user_id"])
+    if item is None:
+        raise BizError(ERR_SESSION_NOT_FOUND, "会话不存在或已删除", http_status=404)
+    records = await chat_store.count_records(session_id)
     await chat_store.delete_session(session_id, user["user_id"])
-    # v3 / WP3：会话级联删除对应的 I/O 运行日志（失败只告警，不影响删除结果）
+    soft_deleted = 0
     try:
-        await io_log.delete_session_logs(session_id)
-    except Exception:  # noqa: BLE001
+        soft_deleted = await io_log.delete_session_logs(session_id)
+    except Exception:  # noqa: BLE001 - 日志标记失败不影响会话删除
         pass
+    await audit.log_operation(
+        user["user_id"], audit.SESSION_DELETE, "session", session_id, 1,
+        {"session_name": item.get("session_name"), "records": records, "io_logs": soft_deleted},
+    )
     return ok({"session_id": session_id}, "会话已删除")

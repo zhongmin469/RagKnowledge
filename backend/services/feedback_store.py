@@ -116,10 +116,17 @@ async def list_feedback(
     rating: Optional[int] = None,
     limit: int = 20,
     offset: int = 0,
+    user_id: Optional[int] = None,
 ) -> tuple[int, list[dict]]:
     pool = get_pool()
-    where = "WHERE rating = %(rating)s" if rating is not None else ""
-    params = {"rating": rating, "lim": int(limit), "off": int(offset)}
+    clauses = []
+    if rating is not None:
+        clauses.append("rating = %(rating)s")
+    # v5 R7：管理端按用户定位其反馈
+    if user_id is not None:
+        clauses.append("user_id = %(user_id)s")
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    params = {"rating": rating, "user_id": user_id, "lim": int(limit), "off": int(offset)}
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(f"SELECT count(*) FROM chat_feedback {where}", params)

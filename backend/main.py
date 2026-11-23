@@ -25,9 +25,9 @@ from .errors import register_exception_handlers, ok
 from .app_logging import register_middlewares
 from .db import init_pool, close_pool, is_ready
 from .routers import (
-    system, docs, session, session_memory, chat, auth, admin, admin_config, admin_io, admin_feedback, admin_prompt, user_io, biz, export, workflow,
+    system, docs, session, session_memory, chat, auth, admin, admin_config, admin_io, admin_feedback, admin_prompt, user_io, biz, export, workflow, admin_audit, admin_users_view,
 )
-from .services import chat_store, export_store, session_memory_store, io_log, feedback_store, prompt_store, quota, workflow as workflow_service
+from .services import chat_store, export_store, session_memory_store, io_log, feedback_store, prompt_store, quota, workflow as workflow_service, audit
 
 logger = logging.getLogger("rag.main")
 
@@ -44,6 +44,8 @@ async def lifespan(_: FastAPI):
     await export_store.cleanup_expired()
     # v3 / WP3：I/O 运行日志建表 + 异步写入 worker + 保留期清理
     await io_log.ensure_schema()
+    # v5 R8：operation_log 审计索引
+    await audit.ensure_schema()
     await feedback_store.ensure_schema()
     await prompt_store.ensure_schema()
     await quota.ensure_schema()
@@ -116,6 +118,8 @@ app.include_router(admin_config.router)
 app.include_router(admin_io.router)
 app.include_router(admin_feedback.router)
 app.include_router(admin_prompt.router)
+app.include_router(admin_audit.router)
+app.include_router(admin_users_view.router)
 app.include_router(user_io.router)
 app.include_router(biz.router)
 app.include_router(export.router)

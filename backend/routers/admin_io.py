@@ -11,7 +11,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query
 
 from ..errors import BizError, ok, ERR_PARAM
-from ..services import io_log, export_store
+from ..services import io_log, export_store, audit
 from ..services.auth_deps import require_admin
 
 logger = logging.getLogger("rag.router.admin_io")
@@ -40,9 +40,14 @@ async def list_io_logs(
     answer_mode: Optional[str] = Query(None, max_length=16),
     keyword: Optional[str] = Query(None, max_length=128),
     trace_id: Optional[str] = Query(None, max_length=32),
+    include_deleted: bool = Query(True, description="是否包含用户已删除（软删除）记录"),
+    only_deleted: bool = Query(False, description="只看用户已删除记录"),
     _: dict = Depends(require_admin),
 ):
-    """GET /api/admin/io-logs —— 分页查询；筛选：用户/时间/状态/意图/模式/关键词/trace_id。"""
+    """GET /api/admin/io-logs —— 分页查询；筛选：用户/时间/状态/意图/模式/关键词/trace_id。
+
+    v5 R6：管理员默认可见用户已软删除的记录，列表返回 `user_deleted` / `user_deleted_at`。
+    """
     total, items = await io_log.list_logs(
         user_id=user_id,
         start=_date(start, "start"),
@@ -54,6 +59,8 @@ async def list_io_logs(
         trace_id=trace_id,
         page=page,
         size=size,
+        include_deleted=include_deleted,
+        only_deleted=only_deleted,
     )
     return ok({"total": total, "list": items, "page": page, "size": size})
 
@@ -80,7 +87,7 @@ async def export_io_logs(
     rows = await io_log.list_for_export(
         user_id=user_id, start=_date(start, "start"), end=_date(end, "end"),
         status=status, intent=intent, answer_mode=answer_mode,
-        keyword=keyword, trace_id=trace_id,
+        keyword=keyword, trace_id=trace_id, include_deleted=True,
     )
     if not rows:
         raise BizError(ERR_PARAM, "当前筛选条件没有可导出的日志", http_status=400)
@@ -112,13 +119,25 @@ async def export_io_logs(
     info = await export_store.create_export(admin["user_id"], "io-logs", columns, dict_rows)
     if not info:
         raise BizError(ERR_PARAM, "导出生成失败，请缩小筛选范围后重试", http_status=500)
+    await audit.log_operation(
+        admin["user_id"], audit.ADMIN_IO_EXPORT, "user", user_id if user_id else "all", 1,
+        {"filters": {"start": start, "end": end, "status": status, "intent": intent,
+                     "answer_mode": answer_mode, "keyword": keyword, "trace_id": trace_id},
+         "rows": len(rows), "capped": len(rows) >= 10000},
+    )
     return ok({**info, "capped": len(rows) >= 10000}, "导出已生成")
 
 
 @router.get("/{trace_id}")
-async def get_io_detail(trace_id: str, _: dict = Depends(require_admin)):
-    """GET /api/admin/io-logs/{trace_id} —— 该轮详情 + 同一 trace 的全部 LLM 调用时间线。"""
-    item = await io_log.get_detail(trace_id)
+async def get_io_detail(trace_id: str, admin: dict = Depends(require_admin)):
+    """GET /api/admin/io-logs/{trace_id} —— 该轮详情 + 同一 trace 的全部 LLM 调用时间线。
+
+    v5 R9：管理员查看他人链路写 `ADMIN_VIEW_USER_DATA`（60 秒去重）。
+    """
+    item = await io_log.get_detail(trace_id, include_deleted=True)
     if item is None:
         raise BizError(ERR_PARAM, "未找到该 trace_id 的运行日志", http_status=404)
+    owner_id = item.get("user_id")
+    if owner_id is not None and int(owner_id) != int(admin["user_id"]):
+        await audit.log_view(admin["user_id"], int(owner_id), "trace", trace_id)
     return ok(item)

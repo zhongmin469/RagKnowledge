@@ -1,13 +1,16 @@
 <script setup>
 // 本轮链路抽屉（v3 / WP5-1）：用户本人 trace 的时间线、模型调用、工具链与上下文注入。
+// v5 R9：adminView=true 时改走管理端接口，并显示“已记录审计”的只读横幅。
 import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { fetchMyTrace } from '../api/ioLogs'
+import { fetchMyTrace, fetchIoDetail } from '../api/ioLogs'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
   traceId: { type: String, default: '' },
-  fallback: { type: Object, default: null }
+  fallback: { type: Object, default: null },
+  adminView: { type: Boolean, default: false },
+  ownerLabel: { type: String, default: '' }
 })
 const emit = defineEmits(['update:modelValue'])
 
@@ -209,7 +212,7 @@ async function load() {
   error.value = ''
   detail.value = null
   try {
-    detail.value = await fetchMyTrace(props.traceId)
+    detail.value = props.adminView ? await fetchIoDetail(props.traceId) : await fetchMyTrace(props.traceId)
   } catch (e) {
     error.value = e?.message || '链路加载失败'
   } finally {
@@ -277,6 +280,10 @@ function close() {
           <el-button class="td-close" link @click="close">关闭</el-button>
         </div>
       </header>
+
+      <div v-if="adminView" class="td-audit-banner">
+        正在查看用户「{{ ownerLabel || detail?.user_id || '—' }}」的记录，本次查看已记录审计日志
+      </div>
 
       <div v-if="traceId" class="td-trace">
         <span class="td-trace-label">trace_id</span>
@@ -798,5 +805,16 @@ function close() {
     width: 100%;
     justify-content: space-between;
   }
+}
+
+.td-audit-banner {
+  margin: 12px 22px 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid #e6a23c;
+  background: rgba(230, 162, 60, 0.1);
+  color: #b88230;
+  font-size: 12px;
+  line-height: 1.5;
 }
 </style>

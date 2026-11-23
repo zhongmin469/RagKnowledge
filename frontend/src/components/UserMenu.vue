@@ -109,9 +109,9 @@ async function onDeleteLogs() {
   if (deletingLogs.value) return
   try {
     await ElMessageBox.confirm(
-      '将物理删除你本人的全部问答运行日志（含问题与回答原文），删除后管理员也无法查到，且不可恢复。确认继续？',
+      '删除后，你本人将无法再查看或导出这些问答记录，且无法恢复；为满足审计与排障要求，管理员在日志保留期内（当前 90 天）仍可查看这批记录。确认继续？',
       '删除我的运行日志',
-      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+      { type: 'warning', confirmButtonText: '确认删除', cancelButtonText: '取消' }
     )
   } catch {
     return
@@ -119,7 +119,7 @@ async function onDeleteLogs() {
   deletingLogs.value = true
   try {
     const data = await deleteMyLogs()
-    ElMessage.success(`已删除 ${data?.removed ?? 0} 条运行日志`)
+    ElMessage.success(`已从你的视角删除 ${data?.removed ?? 0} 条运行日志`)
   } catch {
     // 统一拦截器提示
   } finally {
@@ -209,6 +209,9 @@ async function onDeleteLogs() {
         <el-button size="small" type="danger" plain :loading="deletingLogs" @click="onDeleteLogs">
           删除我的全部日志
         </el-button>
+      </div>
+      <div class="data-note">
+        管理员具备审计查看权：删除仅让你本人不可见，管理员在保留期内仍可查看这批记录；管理员每次查看他人数据都会写入审计日志。
       </div>
     </div>
 
@@ -399,6 +402,13 @@ async function onDeleteLogs() {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.data-note {
+  margin-top: 8px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-secondary);
 }
 
 .hint-title {
